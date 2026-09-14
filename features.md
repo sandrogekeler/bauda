@@ -1,6 +1,6 @@
 # BAUDA — Features & Design Document
 
-> A terminal-native idle empire builder with gambling mechanics.
+> A 3D idle empire builder rendered entirely as ASCII, with gambling mechanics.
 > Runs as an iOS home-screen web app. Single player. No real money, no ads.
 
 **Status:** design draft v0.1 — nothing implemented yet.
@@ -55,50 +55,131 @@ Every system connects through one sentence:
 
 ---
 
-## 2. Presentation: the ASCII control panel
+## 2. Presentation: 3D world, ASCII output
 
-### 2.1 The core trick — grid display, continuous world
+### 2.1 The approach — real 3D, ASCII as a post-process
 
-ASCII is a character grid. The building system is not. These are reconciled by
-treating the character grid as a **framebuffer**, not as the world:
-
-- Buildings are stored at **float** world coordinates `(x, y)` with **float** aura radii.
-- The renderer rasterizes the continuous world into a cell grid each frame.
-- Sub-cell precision comes from **Braille glyphs** (`U+2800`–`U+28FF`, 2×4 dot
-  subpixels per cell → 8× resolution) and **quadrant/half blocks** (`▘▝▗▖▀▄▌▐█`).
-- **Wide glyphs** (Cogmind's approach): a large structure may claim 2×1 or 3×2 cells,
-  breaking the visual monotony of one-glyph-one-thing.
-- Zoom changes *world-units-per-cell*. Zooming in reveals sub-cell placement detail,
-  so precise placement is visibly meaningful, not hidden by quantization.
-
-Net effect: placement resolution is roughly **1/8 of a character cell**, which is
-finer than any grid-snapped builder, while the screen still reads as a terminal.
-
-### 2.2 Aura rendering
-
-Overlapping proximity auras are rendered as **density shading** over the district:
+The world is a genuine 3D scene viewed from an angled top-down orthographic camera.
+It is never drawn as characters by hand. Instead, the rendered frame is converted to
+ASCII by a post-processing pass, the way a shader would apply cel-shading:
 
 ```
- .  ·  :  ;  +  *  #  %  @      ← increasing aura density
+  3D scene            low-res render        ASCII conversion         character
+  (low-poly     ──▶   target               ──▶  pass             ──▶  cell buffer
+   meshes)            (1 texel per cell)        (luminance +          (composited
+                      + depth + normals          edges + color)        with UI)
 ```
 
-Density = summed aura strength at that world point. This makes optimization
-legible at a glance: you are literally looking at a heatmap of your own multipliers.
-A "hot" district looks hot.
+**The pipeline, concretely:**
 
-### 2.3 Panel layout
+1. **Render** the scene with an orthographic camera at a fixed pitch (~35–40°) into an
+   offscreen target whose resolution equals the character grid (e.g. 96×54), plus
+   depth and normal buffers.
+2. **Luminance → fill ramp.** Per cell, map brightness to a density ramp:
+   `` ` .:-=+*#%@ `` — this gives volume and shading.
+3. **Edges → directional glyphs.** A difference-of-Gaussians pass finds structural
+   edges; a Sobel operator gives each edge a *direction*, quantized into four
+   buckets rendered as `| / — \`. This is the step that makes it read as 3D
+   geometry instead of luminance mush — silhouettes, roof ridges, and building
+   corners come through as clean lines.
+4. **Normals → glyph set selection.** Surface orientation picks which sub-ramp a cell
+   uses, so roofs, walls, and ground are visually distinguishable even at equal
+   brightness.
+5. **Color.** Per-cell foreground color sampled from scene albedo, quantized to the
+   current palette tier (§2.4).
+6. **Composite.** The result is written into the *same character cell buffer* as the
+   UI chrome, so the world view and the control panel are one unified terminal image
+   rather than a 3D canvas with UI floating over it.
 
-The app is framed as an OS — `BAUDA/OS` — not as a game menu system.
+This is a well-established technique — three.js ships a `SobelOperatorShader`, and
+Acerola's ASCII shader (DoG + Sobel + quantization) has open HTML-canvas
+implementations to reference. ASCIICKER proves the whole concept is viable in a
+browser: full 3D, rendered entirely as colored ASCII, since 2017.
+
+### 2.2 Why this resolves the grid problem
+
+ASCII is a character grid; the building system is not. With a 3D scene and an ASCII
+post-process, that conflict simply does not exist:
+
+- The world is **continuous 3D space**. Buildings sit at float `(x, y, z)` with float
+  rotation and float-radius auras.
+- The character grid is only the **display resolution** — like a very low-res monitor.
+- Placement precision is bounded by raycast accuracy and zoom, **not** by cells. Zoom
+  in and you place as finely as you like.
+- Camera rotation (4 fixed steps, or free orbit at higher terminal tiers) is free —
+  it is a real camera on a real scene.
+
+### 2.3 Why this is also the cheapest art pipeline
+
+The ASCII pass destroys fine detail by design. That means:
+
+- **Low-poly, untextured meshes are sufficient** — and in fact look better, because
+  clean silhouettes survive the conversion while detailed models turn to noise.
+- **Silhouette-first modelling.** A building needs a readable outline and a couple of
+  strong planes; nothing else reaches the screen.
+- **Everything is automatically art-consistent.** Whatever goes in comes out looking
+  like the same game.
+- No sprite sheets, no hand-drawn animation frames. Compare *Stone Story RPG*:
+  16,000 hand-drawn ASCII frames over nine years. That is not a viable budget here;
+  this pipeline avoids needing it.
+- Animation is mesh transforms and shader parameters, not redrawn characters.
+
+This is the single biggest production-cost decision in the document, and it is why
+the 3D approach beats hand-authored ASCII art for this project.
+
+### 2.4 Terminal progression — the uplink track
+
+Because the ASCII conversion is parameterized, **the renderer itself becomes the
+progression track.** Upgrades bought with Bandwidth literally improve the picture:
+
+| Tier | Baud | Grid | Colors | Render quality |
+|------|------|------|--------|----------------|
+| 0 | 300 | 40×24 | 2 (amber/black) | Luminance ramp only. Blobby, barely legible shapes. Text crawls in. Manual refresh. |
+| 1 | 1200 | 48×30 | 4 | + basic edge pass. Buildings gain outlines. Auto-refresh 1 Hz. |
+| 2 | 9600 | 64×36 | 8 | + directional Sobel glyphs, normal-based glyph sets. Real 3D readability. Live camera. |
+| 3 | 57.6k | 80×45 | 16 | + free camera orbit, split panes, aura heatmap overlay. |
+| 4 | 1M+ | 100×56 | 256 | + full-rate redraw, animated effects, ghost placement preview, depth fog. |
+| 5 | "direct neural" | 120×68 | truecolor | + CRT bloom, scanlines, phosphor persistence, chromatic aberration. Cosmetic flex tier. |
+
+The world **visibly resolves into clarity** as you progress. At tier 0 you are
+squinting at an amber smear trying to tell a slot machine from a power plant; by tier
+4 you are looking at a crisp animated schematic of a city. That is a far stronger
+reward than a number going up, and it costs nothing to build once the pipeline is
+parameterized.
+
+Early friction is real but must be brief — tier 1 within ~3 minutes of first launch,
+tier 2 within ~15. The opening squint is a hook, not a wall.
+
+### 2.5 Aura visualization
+
+Proximity auras (§6.2) are rendered as **ground-plane emissive shading** in the 3D
+scene, which the luminance ramp then converts to character density for free:
+
+```
+ `  .  :  -  =  +  *  #  %  @      ← increasing aura density
+```
+
+A well-optimized district literally glows brighter. Overlapping auras read as a
+heatmap you are looking at in 3D, so "is this placement good?" is answerable at a
+glance without opening a panel. Toggleable overlay; unlocked at terminal tier 3.
+
+### 2.6 Panel layout
+
+The app is framed as an OS — `BAUDA/OS` — not as a game menu system. The 3D viewport
+occupies a region of the character grid; everything else is terminal chrome drawn
+into the same buffer.
 
 ```
 ┌─ BAUDA/OS v0.1 ──────────────── 9600 baud ─ [HEAT 34%] ─┐
 │ DISTRICT: NEON FLATS              BANK ▸ 4.812e9 ¢      │
 ├─────────────────────────────────────────────────────────┤
-│        ⢀⣀⡀        ·:;+*#*+;:·                          │
-│      ⢰⣿⣿⣿⡆      ·;+*#%@%#*+;·     [SLOT-A2]  ▸ 1.2e6/s │
-│      ⠸⣿⣿⣿⠇    ·:;+*#%@@@%#*+;:·   [PINB-01]  ▸ 8.4e5/s │
-│        ⠉⠉⠉      ·;+*#%@%#*+;·     [MEGA-S ]  ▸ CHARGING│
-│                   ·:;+*#*+;:·      ══════════▸ 71%      │
+│         ___                                             │
+│       /###\__          ,:=+*#%@%#*+=:,                  │
+│      |#####|\        ,=+*#%@@@@@%#*+=,    [SLOT-A2] ▸ ON│
+│      |#####| |      :+*#%@@@@@@@@@%#*+:   [PINB-01] ▸ ON│
+│      \_____|/        `=+*#%@@@@@%#*+=`    [MEGA-S ] ▸ 71│
+│        |___|           `,:=+*#%#*+=:,`    ══════════▸    │
+│                                                         │
 ├─────────────────────────────────────────────────────────┤
 │ > _                                                     │
 ├─────────────────────────────────────────────────────────┤
@@ -107,41 +188,21 @@ The app is framed as an OS — `BAUDA/OS` — not as a game menu system.
 ```
 
 - **Top bar** — persistent state: baud rate, Heat, bank.
-- **Viewport** — the rasterized district. Pan/pinch with touch.
-- **Command line** — optional power-user input (see §9.3). Hidden until unlocked.
-- **Log strip** — scrolling event lines (payouts, raids, alerts).
+- **Viewport** — the 3D→ASCII district. Drag to pan, pinch to zoom, two-finger twist
+  (or `Q`/`E`-equivalent buttons) to rotate.
+- **Command line** — optional power-user input (see §15.1). Hidden until unlocked.
+- **Side strip** — live machine status, collapsible.
 - **Channel bar** — the 5 primary nav channels.
 
-### 2.4 Terminal progression (the uplink track)
+### 2.7 Visual identity
 
-Interface capability is a real upgrade path, purchased with Bandwidth:
-
-| Tier | Baud | Columns | Colors | Unlocks |
-|------|------|---------|--------|---------|
-| 0 | 300 | 40 | 2 (amber/black) | Character-by-character text crawl. Manual refresh. |
-| 1 | 1200 | 48 | 4 | Auto-refresh 1 Hz. Payout ticker. |
-| 2 | 9600 | 64 | 8 | Live viewport. Aura heatmap overlay. |
-| 3 | 57.6k | 80 | 16 | Split panes. Two districts visible at once. |
-| 4 | 1M+ | 100+ | 256 | Animated glyph effects. Full-rate redraw. Ghost/preview placement. |
-| 5 | "direct neural" | fluid | truecolor | CRT bloom, scanline, chroma effects. Cosmetic flex tier. |
-
-This is deliberately a **quality-of-life-as-reward** track. Early friction is real
-(you genuinely wait for text to crawl at 300 baud) but brief — tier 1 within minutes.
-It makes the interface itself feel earned.
-
-### 2.5 Visual identity
-
-- Monospace-only. Self-hosted font with guaranteed Braille + box-drawing coverage
-  (candidate: a permissively-licensed terminal font; verify glyph coverage before
-  committing — iOS system monospace coverage of `U+2800` block is **unverified**
-  and must be tested on device).
+- Monospace-only, self-hosted font. Requirements are modest: standard ASCII ramp plus
+  box-drawing. No exotic Unicode blocks required, which sidesteps a real font-coverage
+  risk.
 - Palette: phosphor amber default; green, ice-blue, and magenta unlockable.
-- Optional CRT post-processing: scanlines, slight barrel, phosphor persistence.
-  Must be toggleable — it will nauseate some players.
-- Boot sequence on cold launch (skippable after first time, and skippable always
-  via tap). Short. 2 seconds, not 15.
-
----
+- Optional CRT post-processing: scanlines, slight barrel distortion, phosphor
+  persistence. Must be toggleable — it will nauseate some players.
+- Boot sequence on cold launch. Short: 2 seconds, always skippable by tap.
 
 ## 3. Core Loop & Session Shapes
 
@@ -226,10 +287,18 @@ also a **placement** question. That is the whole point: one meter, three systems
 
 ### 6.1 Free-form placement
 
-- Continuous float coordinates. No grid, no snapping (optional soft-snap toggle for
-  accessibility).
-- Buildings have a **footprint** (collision radius/polygon) and an **aura radius**.
+- Continuous float coordinates in real 3D space. No grid, no snapping (optional
+  soft-snap toggle for accessibility).
+- Buildings have a **footprint** (collision polygon), a **height**, and one or more
+  **aura radii**. Free rotation on the vertical axis.
 - Placement is legal if footprints do not overlap and the point is inside an owned plot.
+- **Interaction:** drag to summon a ghost mesh that follows a raycast onto the ground
+  plane; a live aura-delta readout shows the income change before you commit; release
+  to place. Pinch-zoom for fine positioning, plus a magnified nudge-pad for
+  sub-unit adjustment. Placement is never blocked by display resolution — only by
+  how far you have zoomed in.
+- **Height matters at higher tiers**: tall buildings cast aura shadows and occlude
+  the camera, so vertical layout is a later-game dimension of the same puzzle.
 - **Buildings can be moved and sold at any time.** (Deliberate divergence from
   *Islanders*, which forbids relocation — that works for a scoring puzzle, but an
   idle game where you cannot fix a mistake is hostile.) Moving costs a small fee
@@ -479,6 +548,10 @@ events, anything that punishes not playing.
   manual "Share → Add to Home Screen" coach screen is required.
 - Storage quotas are large, but **eviction after long inactivity remains possible**.
   Mitigate with the Persistent Storage API request *and* a manual save export.
+- **WebGL contexts are discarded on backgrounding.** `webglcontextlost` /
+  `webglcontextrestored` must be handled — rebuild the glyph atlas and render targets
+  on restore. Untested assumption to verify in Phase 0: how aggressively iOS drops
+  the context when the app is merely off-screen briefly.
 
 ### Requirements
 
@@ -504,11 +577,24 @@ events, anything that punishes not playing.
 
 - **TypeScript + Vite**, no UI framework. The entire UI is a character grid; a
   virtual DOM is the wrong tool.
-- **Canvas 2D with a cached glyph atlas** — draw each glyph once per charset/color
-  into an offscreen atlas, then `drawImage` per cell. This is the established
-  approach for web terminals and comfortably handles a ~100×50 cell grid at 60 fps
-  on mobile. WebGL is a later optimization if effects demand it.
-- **Dirty-cell diffing** — only re-blit changed cells.
+- **WebGL for the world, one glyph-atlas pass for output.** Two stages:
+  1. **Scene pass** — low-poly meshes, orthographic camera, rendered to an offscreen
+     target at *character-grid resolution* (≈96×54 = ~5k pixels, i.e. smaller than a
+     thumbnail) plus depth and normal buffers. This is almost free on mobile GPUs;
+     the low target resolution is the whole performance story.
+  2. **ASCII pass** — a single fullscreen quad shader: luminance ramp +
+     difference-of-Gaussians + Sobel direction + normal-based glyph selection →
+     index into a **glyph atlas texture**, output colored characters.
+- **three.js** for v1 (ships `SobelOperatorShader`, saves weeks). If bundle size or
+  control becomes a problem, replace with a minimal custom WebGL renderer — the
+  approach ASCIICKER took, and the scene requirements here are simple enough that
+  this is a realistic fallback rather than a rewrite.
+- **UI chrome** is written into the same cell buffer as the ASCII pass output, so the
+  final frame is one unified character grid — not a 3D canvas with HTML on top.
+- **Dirty-cell diffing** for the static chrome regions; the viewport redraws wholesale
+  (it is cheap).
+- **Handle WebGL context loss** — iOS discards GL contexts on backgrounding without
+  warning. Context restore must rebuild atlas + targets and resume cleanly.
 - `break_infinity.js` (or equivalent) for big numbers.
 - A seeded PRNG (xorshift/PCG) — **all** randomness is seeded and reproducible.
 
@@ -541,9 +627,17 @@ events, anything that punishes not playing.
 
 ## 14. Build Phases
 
-### Phase 0 — Skeleton
-Glyph-atlas renderer, character grid, touch pan/zoom, PWA shell, save system,
-deterministic tick loop. No gameplay. Proves the hardest technical risk first.
+### Phase 0 — Skeleton (de-risking pass)
+3D→ASCII render pipeline, glyph atlas, unified cell buffer, orthographic camera with
+touch pan/zoom/rotate, raycast ghost placement, PWA shell, save system, deterministic
+tick loop. No gameplay.
+
+Three questions this phase exists to answer, in order:
+1. Does the 3D→ASCII output **read clearly** at 64×36 on a phone screen?
+2. Does **continuous placement by touch** feel good?
+3. Does it hold **60 fps** on a mid-range iPhone with CRT effects on?
+
+If (1) or (2) fails, the design changes before any content exists. That is the point.
 
 ### Phase 1 — MVP (the actual game, small)
 - One district, free-form placement, 3 aura types
@@ -581,18 +675,25 @@ accessibility pass, balance harness tuning.
    auto-wagering fits the fiction perfectly — but it is a large feature and a
    difficulty cliff. Proposal: build the command line early as a *convenience*
    (`build slot a2`, `goto district 2`), expand to scripting only in Phase 5.
-2. **Art scale.** Stone Story took 9 years and 16,000 hand-drawn ASCII frames. That
-   is not the target. Proposal: procedurally assembled glyph sprites with a small
-   number of hand-authored animation frames for hero moments (Super Cashout, Mega
-   Slot detonation, duel resolution) only.
+2. **Art scale.** Resolved by the 3D pipeline (§2.3): low-poly untextured meshes,
+   silhouette-first, no hand-drawn frames. Remaining question is *who models them* —
+   ~60–90 machine archetypes plus support buildings is a real but tractable art
+   task, and the meshes can be crude. Primitive-composition (boxes, cylinders,
+   wedges assembled procedurally from a parts list) may cover most of it.
 3. **How punishing should MELTDOWN be?** Currently drafted as a genuine loss.
    Needs playtesting — it may need a one-time-per-cycle insurance mechanic.
-4. **Does non-grid placement survive touch input?** Precise sub-cell placement on a
-   phone needs a good interaction (proposal: drag to place a ghost, then a
-   magnified nudge-pad for fine positioning). This must be prototyped in Phase 0 —
-   if it feels bad, the whole placement pillar is at risk.
-5. **Font licensing** — needs a permissively-licensed monospace font with verified
-   Braille and box-drawing coverage. Unresolved.
+4. **Does non-grid placement survive touch input?** Raycast ghost placement plus a
+   nudge-pad is the proposal, but this must be prototyped in Phase 0 — if it feels
+   bad, the whole placement pillar is at risk.
+5. **Legibility at low cell counts.** The real open risk of the 3D→ASCII approach:
+   at 40×24 (tier 0) a building may be an unreadable smear. Mitigations: strong
+   silhouettes, mandatory labels, and a camera that snaps closer at low tiers. Must
+   be answered in Phase 0, and it constrains how punishing tier 0 can be.
+6. **Camera rotation vs. spatial memory.** Free orbit is expressive but players lose
+   track of their own city. Proposal: 4 fixed 90° steps by default, free orbit
+   unlocked as a tier-3 option, with a compass always visible.
+7. **Font licensing** — needs a permissively-licensed monospace font. Requirements are
+   now modest (ASCII + box-drawing only), so this is low risk, but unresolved.
 
 ---
 
@@ -613,5 +714,17 @@ Design patterns drawn from, and verified during research:
   investor/prestige loops.
 - **Stone Story RPG** — animated ASCII as a premium aesthetic; *Stonescript* as a
   player-facing automation layer; incremental influence on an action RPG.
+- **ASCIICKER** (msokalski/Gumix, 2017–) — proof that a full 3D game rendering
+  entirely to colored ASCII works in a browser: 3D computed in wasm, output through a
+  custom minimal WebGL renderer that draws colored ASCII cells. The closest existing
+  thing to this project's renderer.
+- **Acerola's ASCII shader** — the modern 3D→ASCII technique: gaussian blur,
+  difference-of-gaussians, Sobel operator for edge *direction*, and quantization;
+  open HTML-canvas implementations exist to reference.
+- **three.js `SobelOperatorShader`** — official post-processing addon; the edge-detection
+  half of the pipeline is off-the-shelf.
 - **Cogmind** — terminal rendering architecture; wide glyphs spanning multiple cells
   to escape uniform-grid monotony.
+- **Return of the Obra Dinn** — precedent for a 3D game shipped through a severely
+  constrained display filter, and for treating that filter as the art direction
+  rather than a limitation.
