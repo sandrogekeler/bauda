@@ -7,6 +7,7 @@ import { World } from './world/world'
 import { UNIT_BY_ID } from './game/units'
 import { Game, type Unit } from './game/state'
 import { Gestures } from './input/gestures'
+import { Boot } from './ui/boot'
 import { SimLoop, TICK_MS } from './sim/loop'
 import { exportSave, importSave, load, save, SAVE_VERSION, type SaveData } from './save/save'
 import { registerServiceWorker, requestPersistence } from './pwa'
@@ -34,6 +35,9 @@ const ui: ScreenState = {
   showAuras: true,
   delta: null,
   report: null,
+  azimuth: 0,
+  boot: new Boot(),
+  now: 0,
 }
 
 let userZoom = 1
@@ -119,6 +123,7 @@ function onAction(id: string) {
     return
   }
   if (id === 'dismiss') { ui.report = null; ui.status = 'READY'; return }
+  if (id === 'bootskip') { ui.boot?.skip(); return }
 
   // --- MAP
   if (id.startsWith('build:')) {
@@ -349,6 +354,10 @@ function frame(now: number) {
 
   sim.advance(dt)
 
+  ui.now = now
+  ui.azimuth = world.azimuth
+  if (ui.boot?.done) ui.boot = null
+
   ui.delta = null
   if (ui.selectedDef && ghostPos) {
     const valid = game.canPlace(ui.selectedDef, ghostPos.x, ghostPos.z)
@@ -443,6 +452,7 @@ async function boot() {
   }
   applyTier()
   void requestPersistence()
+  ui.boot?.start(performance.now())
   requestAnimationFrame(frame)
 }
 
@@ -454,6 +464,8 @@ void boot()
   game,
   setTier(i: number) { game.tier = i; applyTier() },
   setChannel(c: Channel) { ui.channel = c },
+  skipBoot() { ui.boot?.skip(); ui.boot = null },
+  overflow: () => screen.overflow,
   setPhosphor(i: number) { game.phosphor = i; renderer.setPhosphor(i) },
   setAzimuth(a: number) { world.azimuth = a; world.updateCamera() },
   dump: () => renderer.dumpText(),

@@ -42,7 +42,15 @@ page.on('console', (m) => { if (m.type() === 'error') console.log('  [console]',
 
 await page.goto(`http://localhost:${PORT}/`, { waitUntil: 'load' })
 await page.waitForFunction(() => !!window.__bauda, null, { timeout: 15000 })
-await page.waitForTimeout(600)
+await page.waitForTimeout(400)
+
+// --- boot screen -----------------------------------------------------------
+await page.screenshot({ path: join(OUT, 'p1-boot.png') })
+await page.evaluate(() => window.__bauda.skipBoot())
+await page.waitForTimeout(300)
+
+// --- first-run screen ------------------------------------------------------
+await page.screenshot({ path: join(OUT, 'p1-firstrun.png') })
 
 // --- determinism -----------------------------------------------------------
 console.log('\n── determinism ──')
@@ -86,6 +94,7 @@ console.log(`  total ${long.totalCash.toExponential(2)}  income ${long.income.to
 console.log('\n── channels ──')
 await page.evaluate(() => {
   const b = window.__bauda
+  b.skipBoot()
   b.give(400000)
   const plan = [
     ['slot3', 0, 0], ['slot2', -7, -3], ['slot1', -7.5, 2.5], ['neon', -3.5, 6],
@@ -120,6 +129,46 @@ for (const [tier, channel] of [[0, 'MAP'], [2, 'MAP'], [2, 'MACH'], [2, 'OPS'], 
   console.log(`  ${name}`)
 }
 
-writeFileSync(join(OUT, 'phase1.json'), JSON.stringify({ det, runs, long }, null, 2))
+// --- narrow-width control overflow ----------------------------------------
+// Regions are rebuilt during the render loop, so every state change has to be
+// followed by an actual frame before the result can be read.
+const nextFrame = () => page.evaluate(() =>
+  new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))))
+
+console.log('\n\u2500\u2500 40-column layout \u2500\u2500')
+await page.evaluate(() => window.__bauda.setTier(0))
+await nextFrame()
+
+const overflow = { channels: {}, buildReachable: 0, buildTotal: 0 }
+let overflowClean = true
+for (const c of ['MAP', 'MACH', 'OPS', 'SYS']) {
+  await page.evaluate((ch) => { window.__bauda.setChannel(ch); window.__bauda.act('back') }, c)
+  await nextFrame()
+  const o = await page.evaluate(() => ({
+    overflow: [...window.__bauda.overflow()],
+    regions: window.__bauda.regions().length,
+  }))
+  overflow.channels[c] = o
+  if (o.overflow.length) overflowClean = false
+  console.log(`  ${c.padEnd(5)} ${String(o.regions).padStart(2)} controls  overflow: ${o.overflow.length ? o.overflow.join(',') : 'none'}`)
+}
+
+await page.evaluate(() => window.__bauda.setChannel('MAP'))
+await nextFrame()
+const ids = new Set()
+for (let i = 0; i < 14; i++) {
+  const page_ids = await page.evaluate(() => window.__bauda.regions().filter((r) => r.startsWith('build:')))
+  for (const id of page_ids) ids.add(id)
+  await page.evaluate(() => window.__bauda.act('page:+'))
+  await nextFrame()
+}
+overflow.buildReachable = ids.size
+overflow.buildTotal = await page.evaluate(() => window.__bauda.game.unlockedUnits.length)
+console.log(`  build options reachable: ${overflow.buildReachable}/${overflow.buildTotal}`)
+const pass = overflowClean && overflow.buildReachable === overflow.buildTotal
+console.log(`  verdict: ${pass ? 'OK' : 'FAIL'}`)
+await page.screenshot({ path: join(OUT, 'p1-t0-narrow.png') })
+
+writeFileSync(join(OUT, 'phase1.json'), JSON.stringify({ det, runs, long, overflow }, null, 2))
 await browser.close()
 server.close()

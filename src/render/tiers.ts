@@ -21,18 +21,28 @@ export interface Tier {
   freeOrbit: boolean
   /** CRT post effects. */
   crt: boolean
+  /**
+   * Characters per second for the text crawl.
+   *
+   * Deliberately NOT the literal baud rate. 300 baud is 30 cps, which would
+   * take 57 seconds to paint a 40x43 screen - atmospheric for about four
+   * seconds and unplayable after that. The crawl is applied only to the boot
+   * sequence and to new log lines, never to the live HUD, and at a rate that
+   * reads as "slow link" rather than as a loading bar.
+   */
+  cps: number
 }
 
 export const TIERS: Tier[] = [
   // Verified in Phase 0: edges carry *form*, shades carry *depth*. Turning
   // edges off at tier 0 made buildings unidentifiable, not merely crude, so
   // tier 0 keeps edges and earns its primitiveness through shades and grid size.
-  { id: 0, name: 'TELETYPE',  baud: '300',    cols: 40,  rows: 24, shades: 2,  ss: 2, edges: true,  normals: false, freeOrbit: false, crt: false },
-  { id: 1, name: 'DIALUP',    baud: '1200',   cols: 48,  rows: 30, shades: 4,  ss: 2, edges: true,  normals: false, freeOrbit: false, crt: false },
-  { id: 2, name: 'LEASED',    baud: '9600',   cols: 64,  rows: 36, shades: 8,  ss: 3, edges: true,  normals: true,  freeOrbit: false, crt: false },
-  { id: 3, name: 'FIBRE',     baud: '57.6k',  cols: 80,  rows: 45, shades: 16, ss: 3, edges: true,  normals: true,  freeOrbit: true,  crt: false },
-  { id: 4, name: 'DARKLINE',  baud: '1M',     cols: 100, rows: 56, shades: 32, ss: 3, edges: true,  normals: true,  freeOrbit: true,  crt: false },
-  { id: 5, name: 'NEURAL',    baud: 'direct', cols: 120, rows: 68, shades: 64, ss: 4, edges: true,  normals: true,  freeOrbit: true,  crt: true  },
+  { id: 0, name: 'TELETYPE',  baud: '300',    cols: 40,  rows: 24, shades: 2,  ss: 2, edges: true,  normals: false, freeOrbit: false, crt: false , cps: 55 },
+  { id: 1, name: 'DIALUP',    baud: '1200',   cols: 48,  rows: 30, shades: 4,  ss: 2, edges: true,  normals: false, freeOrbit: false, crt: false , cps: 130 },
+  { id: 2, name: 'LEASED',    baud: '9600',   cols: 64,  rows: 36, shades: 8,  ss: 3, edges: true,  normals: true,  freeOrbit: false, crt: false , cps: 420 },
+  { id: 3, name: 'FIBRE',     baud: '57.6k',  cols: 80,  rows: 45, shades: 16, ss: 3, edges: true,  normals: true,  freeOrbit: true,  crt: false , cps: 1400 },
+  { id: 4, name: 'DARKLINE',  baud: '1M',     cols: 100, rows: 56, shades: 32, ss: 3, edges: true,  normals: true,  freeOrbit: true,  crt: false , cps: 6000 },
+  { id: 5, name: 'NEURAL',    baud: 'direct', cols: 120, rows: 68, shades: 64, ss: 4, edges: true,  normals: true,  freeOrbit: true,  crt: true  , cps: 100000 },
 ]
 
 /** Phosphor palettes. Index 0 is the default amber. */

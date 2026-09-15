@@ -3,6 +3,8 @@ import { Game, HEAT_BANDS, TIER_COST, UPGRADES, heatBand, upgradeCost, type Unit
 import { UNIT_BY_ID, unitCost, type UnitDef } from '../game/units'
 import { RARITY_COLOR, SYMBOL_BY_ID } from '../game/symbols'
 import { TIERS, PHOSPHORS, type Tier } from '../render/tiers'
+import { TICK_MS } from '../sim/loop'
+import { Boot, crawl } from './boot'
 
 export interface Region { x: number; y: number; w: number; h: number; id: string }
 
@@ -27,6 +29,12 @@ export interface ScreenState {
   delta: number | null
   /** Night Shift Report, shown until dismissed. */
   report: string[] | null
+  /** Camera azimuth, for the compass. */
+  azimuth: number
+  /** Boot sequence, or null once it has finished. */
+  boot: Boot | null
+  /** Wall-clock milliseconds, for crawl timing. */
+  now: number
 }
 
 const TOP = 3
@@ -41,6 +49,12 @@ const FOOTER = 4
  */
 export class Screen {
   regions: Region[] = []
+  /**
+   * Controls that did not fit the current width. Empty is the invariant; the
+   * verification harness asserts it at 40 columns, because silently dropping a
+   * control at tier 0 means it does not exist to a new player (issue #6).
+   */
+  overflow: string[] = []
   /** Row after the last line a channel drew, so the log can fill the rest. */
   private contentBottom = 0
 
@@ -53,6 +67,12 @@ export class Screen {
     this.regions = []
 
     const tier = TIERS[g.tier]
+
+    if (s.boot && !s.boot.done) {
+      this.bootScreen(buf, s, tier)
+      return
+    }
+
     this.shell(buf, g, s, tier)
 
     const bodyTop = TOP
@@ -71,6 +91,24 @@ export class Screen {
       if (s.channel !== 'MAP') this.eventLog(buf, g, s, this.contentBottom, bodyBottom)
     }
     this.footer(buf, s, rows, cols)
+
+    this.overflow = this.regions
+      .filter((r) => r.x < 1 || r.x + r.w > cols - 1)
+      .map((r) => r.id)
+  }
+
+  /** Full-screen boot takeover. Tap anywhere to skip. */
+  private bootScreen(buf: CellBuffer, s: ScreenState, tier: Tier) {
+    const { cols, rows } = s
+    buf.box(0, 0, cols, rows, C_MAIN)
+    const lines = s.boot!.visible(s.now, tier)
+    let y = 2
+    for (const line of lines) {
+      buf.text(2, y, line.slice(0, cols - 4), y === 0 ? C_BRIGHT : C_MAIN)
+      y++
+    }
+    buf.text(2, rows - 2, '[SKIP]', C_DIM)
+    this.regions.push({ x: 1, y: 1, w: cols - 2, h: rows - 2, id: 'bootskip' })
   }
 
   // --- shell ---------------------------------------------------------------
@@ -142,6 +180,9 @@ export class Screen {
   private mapChannel(buf: CellBuffer, g: Game, s: ScreenState, top: number, bottom: number) {
     const { cols } = s
     this.rails(buf, top, bottom, cols)
+    this.compass(buf, s, top)
+
+    if (g.units.length === 0) this.firstRunHint(buf, s, top, bottom)
 
     // Three control rows sit over the bottom of the world view.
     let y = bottom - 3
@@ -206,6 +247,44 @@ export class Screen {
         buf.textRight(cols - 2, y, def.label, C_BRIGHT)
       }
     }
+  }
+
+  /**
+   * Orientation reference, always visible. Without it the camera can be rotated
+   * into a view the player cannot place themselves in (issue #14).
+   */
+  private compass(buf: CellBuffer, s: ScreenState, top: number) {
+    const cx = s.cols - 4
+    const cy = top + 2
+    for (let dy = -1; dy <= 1; dy++) {
+      for (let dx = -1; dx <= 1; dx++) buf.set(cx + dx, cy + dy, '·', C_DIM)
+    }
+    buf.set(cx, cy, '◆', C_DIM)
+
+    // World north is -Z. Project it into screen axes to find where to put the N.
+    const a = s.azimuth
+    const dx = -Math.cos(a)          // component along screen right
+    const up = Math.sin(a)           // component along screen up
+    const ang = Math.atan2(dx, up)   // 0 = up, +pi/2 = right
+    const idx = ((Math.round(ang / (Math.PI / 4)) % 8) + 8) % 8
+    const ring: [number, number][] = [
+      [0, -1], [1, -1], [1, 0], [1, 1], [0, 1], [-1, 1], [-1, 0], [-1, -1],
+    ]
+    const [ox, oy] = ring[idx]
+    buf.set(cx + ox, cy + oy, 'N', C_INFO)
+  }
+
+  /** Shown until the first unit is placed, then never again. */
+  private firstRunHint(buf: CellBuffer, s: ScreenState, top: number, bottom: number) {
+    const { cols } = s
+    const w = Math.min(cols - 6, 34)
+    const x = Math.floor((cols - w) / 2)
+    const y = Math.floor((top + bottom) / 2) - 3
+    buf.fill(x, y, w, 6, ' ', C_DIM)
+    buf.box(x, y, w, 6, C_MAIN, 'START')
+    buf.text(x + 2, y + 2, '1. TAP [SLT1] BELOW', C_BRIGHT)
+    buf.text(x + 2, y + 3, '2. TAP THE GROUND', C_BRIGHT)
+    buf.text(x + 2, y + 4, 'DRAG TO PAN, PINCH TO ZOOM', C_DIM)
   }
 
   // --- MACH ----------------------------------------------------------------
@@ -458,9 +537,15 @@ export class Screen {
     y++
     const room = to - y
     const lines = g.log.slice(-room)
-    for (const line of lines) {
+    const cps = TIERS[g.tier].cps
+    for (let i = 0; i < lines.length; i++) {
       if (y >= to) break
-      buf.text(2, y, line.text.slice(0, cols - 4), line.color)
+      const line = lines[i]
+      // Only the newest line crawls; older ones are already on the wire.
+      const text = i === lines.length - 1
+        ? crawl(line.text, ((g.tick - line.tick) * TICK_MS) / 1000, cps)
+        : line.text
+      buf.text(2, y, text.slice(0, cols - 4), line.color)
       y++
     }
   }
