@@ -9,7 +9,7 @@
  * Dumps both a PNG and the literal character grid per tier, so legibility can
  * be inspected as text rather than eyeballed from a screenshot.
  */
-import { chromium } from 'playwright'
+import { chromium } from 'playwright-core'
 import { mkdirSync, writeFileSync } from 'node:fs'
 import { createServer } from 'node:http'
 import { readFileSync, existsSync } from 'node:fs'

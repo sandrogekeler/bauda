@@ -4,7 +4,7 @@
  * Runs the real production bundle in a real browser, so what is measured is
  * what ships.
  */
-import { chromium } from 'playwright'
+import { chromium } from 'playwright-core'
 import { mkdirSync, writeFileSync, readFileSync, existsSync } from 'node:fs'
 import { createServer } from 'node:http'
 import { extname, join, normalize } from 'node:path'
