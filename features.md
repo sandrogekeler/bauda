@@ -648,16 +648,17 @@ Three questions this phase exists to answer, in order:
 
 If (1) or (2) fails, the design changes before any content exists. That is the point.
 
-### Phase 1 — MVP (the actual game, small)
-- One district, free-form placement, 3 aura types
-- SLOT + WHEEL families, ~15 archetypes, ~30 symbols
-- Cash + Chips, Cashout only
-- Heat meter
-- Terminal tiers 0–2
+### Phase 1 — MVP (the actual game, small) — **BUILT**
+- One district, free-form placement, six aura types
+- SLOT + WHEEL + SUPPORT families, 15 archetypes, 30 symbols
+- Cash + Chips, Cashout, five Chip upgrade tracks, Bandwidth and uplink purchase
+- Heat meter with five bands
+- Terminal tiers 0–2 (bought with Bandwidth)
 - Offline earnings + Night Shift Report
+- Four channels: MAP, MACH, OPS, SYS
 
 **Ship-quality target: this alone should be fun for 3+ hours.** If it is not, adding
-neighbours will not save it.
+neighbours will not save it. Results in §16.2.
 
 ### Phase 2 — Depth
 PINBALL + CARD/DICE + MEGA SLOT + SUPER CASHOUT, full affix system, Buyout layer,
@@ -764,11 +765,61 @@ before it is believed**.
   HUD rendered upside down), and `CanvasTexture` defaults to `flipY: true` (every
   glyph rendered vertically mirrored).
 
-### What Phase 0 says about the design
+### Phase 0: what it says about the design
 
 The 3D→ASCII pipeline is validated as the right call: low-poly untextured primitives
 do produce readable output, confirming the cheap-art claim in §2.3. The open risks
 that remain are ergonomic and performance-related, and both need a physical device.
+
+---
+
+## 16.2 Phase 1 Results
+
+Phase 1 is built. Verified with `npm run verify`, which runs the real production
+bundle in a real browser: a scripted simulated player (`src/dev/autoplay.ts`) plays
+for hours of simulated time, and the harness reports when each pacing milestone was
+reached. It also checks determinism and captures every channel.
+
+### Pacing, measured against the §8 targets
+
+| Target | Design | Measured (3 seeds) |
+|--------|--------|--------------------|
+| First payout | < 20 s | **6 s** |
+| First machine placed | < 60 s | immediate (starting stake covers it) |
+| First Cashout available | ~20 min | **17.4 / 17.4 / 19.4 min** |
+| Terminal tier 1 | ~3 min | **2.3 / 3.0 / 2.4 min** |
+| Terminal tier 2 | ~15 min | **10.1 / 10.4 / 10.3 min** |
+
+Long-horizon growth compounds: ~5.5e5 total cash at 3 hours, ~2.7e7 at 12 hours.
+Determinism holds — identical seeds reproduce exactly, different seeds diverge.
+
+### Three bugs the harness found that review would not have
+
+1. **Cashout was an unrecoverable dead end.** It reset cash to zero *and* removed
+   every machine, so the player had nothing to rebuild with and income stayed at
+   zero forever. A prestige layer must leave a stake; it now scales with Chips, so
+   later runs restart faster, which is the point of the reset.
+2. **Heat saturated instantly.** Driving it from spin count meant any district of
+   real size pinned at 100% within minutes, which removed the decision entirely.
+   Heat is now an *equilibrium* seeking a target set by aura density per machine
+   minus Security — so it stays a placement question at any scale, as §5 intends.
+3. **MELTDOWN became a metronome.** With heat at its ceiling, meltdown fired every
+   105 seconds forever: a tax, not a gamble. Passive play is now capped at CRITICAL
+   (×4.0); reaching MELTDOWN will require a deliberate push action. Tracked as
+   issue #15.
+
+### Balance notes
+
+Chip yield is `3 × (run earnings / 25k)^0.45` and upgrade costs scale `1.42^level`.
+These two exponents set the entire prestige cadence and are the first thing to
+touch when the curve feels wrong. The Cashout *gate* (60k) is deliberately separate
+from the Chip *divisor* (25k) so raising the gate does not also cut Chip yield.
+
+### Known gaps in Phase 1
+
+Meltdown is unreachable passively by design, pending the push action. The event log
+records draws and milestones but not payouts. Symbol acquisition is draw-only —
+no rewards from play yet. All tracked as issues.
 
 ---
 

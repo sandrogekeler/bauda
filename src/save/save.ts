@@ -3,17 +3,14 @@ const STORE = 'state'
 const KEY = 'save'
 const MIRROR = 'bauda:save'
 
-export const SAVE_VERSION = 1
+export const SAVE_VERSION = 2
 
 export interface SaveData {
   v: number
+  /** Wall-clock time of the save; offline progress is derived from it. */
   t: number
-  tier: number
-  phosphor: number
-  seed: number
-  rngState: number
-  buildings: { defId: string; x: number; z: number; rot: number }[]
-  cash: number
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  game: any
 }
 
 /**
@@ -82,10 +79,18 @@ function parse(json: string | null): SaveData | null {
   }
 }
 
-/** Versioned schema with forward migrations, in place from day one. */
+/**
+ * Versioned schema with forward migrations, in place from day one.
+ * A save from a newer build is rejected rather than half-read.
+ */
 function migrate(d: SaveData): SaveData | null {
   if (typeof d?.v !== 'number') return null
   if (d.v > SAVE_VERSION) return null
+  if (d.v < 2) {
+    // v1 predates the game simulation entirely: it stored only a building
+    // layout for the Phase 0 renderer prototype. Nothing worth carrying over.
+    return null
+  }
   return d
 }
 
