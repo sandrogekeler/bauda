@@ -1,0 +1,58 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>BAUDA</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no, maximum-scale=1" />
+    <meta name="description" content="A 3D idle empire builder rendered entirely as ASCII." />
+    <meta name="theme-color" content="#000000" />
+    <!-- iOS home-screen web app: standalone shell, dark status bar. -->
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="apple-mobile-web-app-title" content="BAUDA" />
+    <link rel="manifest" href="./manifest.webmanifest" />
+    <link rel="apple-touch-icon" href="./icon-192.png" />
+    <link rel="icon" href="./icon-192.png" />
+    <style>
+      :root { color-scheme: dark; }
+      html, body {
+        margin: 0; padding: 0; height: 100%; width: 100%;
+        background: #000; overflow: hidden;
+        overscroll-behavior: none;
+        -webkit-user-select: none; user-select: none;
+        -webkit-touch-callout: none;
+        -webkit-tap-highlight-color: transparent;
+      }
+      /* The channel bar must clear the home indicator. */
+      #view {
+        display: block;
+        width: 100%;
+        height: 100%;
+        padding-top: env(safe-area-inset-top, 0px);
+        padding-bottom: env(safe-area-inset-bottom, 0px);
+        box-sizing: border-box;
+        touch-action: none;
+      }
+      #boot {
+        position: fixed; inset: 0; background: #000; color: #ffb733;
+        font: 13px/1.5 "DejaVu Sans Mono", Menlo, monospace;
+        padding: 12px; white-space: pre; pointer-events: none;
+      }
+      #boot.done { display: none; }
+    </style>
+  </head>
+  <body>
+    <canvas id="view"></canvas>
+    <div id="boot">BAUDA/OS
+UPLINK ...</div>
+    <script type="module" src="/src/main.ts"></script>
+    <script>
+      // The boot text is a plain DOM element only until the first frame lands;
+      // after that everything lives in the character grid.
+      window.addEventListener('load', () => {
+        setTimeout(() => document.getElementById('boot')?.classList.add('done'), 350)
+      })
+    </script>
+  </body>
+</html>

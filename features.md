@@ -134,18 +134,27 @@ progression track.** Upgrades bought with Bandwidth literally improve the pictur
 
 | Tier | Baud | Grid | Colors | Render quality |
 |------|------|------|--------|----------------|
-| 0 | 300 | 40×24 | 2 (amber/black) | Luminance ramp only. Blobby, barely legible shapes. Text crawls in. Manual refresh. |
-| 1 | 1200 | 48×30 | 4 | + basic edge pass. Buildings gain outlines. Auto-refresh 1 Hz. |
+| 0 | 300 | 40×24 | 2 (amber/black) | Edge glyphs + flat 2-shade fill. Crude but identifiable. Text crawls in. Manual refresh. |
+| 1 | 1200 | 48×30 | 4 | + shading depth. Buildings gain volume. Auto-refresh 1 Hz. |
 | 2 | 9600 | 64×36 | 8 | + directional Sobel glyphs, normal-based glyph sets. Real 3D readability. Live camera. |
 | 3 | 57.6k | 80×45 | 16 | + free camera orbit, split panes, aura heatmap overlay. |
 | 4 | 1M+ | 100×56 | 256 | + full-rate redraw, animated effects, ghost placement preview, depth fog. |
 | 5 | "direct neural" | 120×68 | truecolor | + CRT bloom, scanlines, phosphor persistence, chromatic aberration. Cosmetic flex tier. |
 
-The world **visibly resolves into clarity** as you progress. At tier 0 you are
-squinting at an amber smear trying to tell a slot machine from a power plant; by tier
-4 you are looking at a crisp animated schematic of a city. That is a far stronger
-reward than a number going up, and it costs nothing to build once the pipeline is
-parameterized.
+The world **visibly resolves into clarity** as you progress. At tier 0 you read a
+coarse outline sketch of your district; by tier 4 you are looking at a crisp animated
+schematic of a city. That is a far stronger reward than a number going up, and it
+costs nothing to build once the pipeline is parameterized.
+
+**Revised after Phase 0 (see §16).** The original plan turned edge detection off at
+tier 0. Testing showed that removes building *identity*, not just fidelity — the
+district became an unreadable smear rather than a crude sketch. Edges carry form;
+shade count carries depth. Tier 0 therefore keeps edges and earns its primitiveness
+through grid size, 2-shade flat fill, and the text crawl.
+
+Tiers also **zoom**: lower tiers frame fewer, larger buildings, so legibility is
+preserved rather than sacrificed. The exponent is under 1, so higher tiers still
+show meaningfully more of the city.
 
 Early friction is real but must be brief — tier 1 within ~3 minutes of first launch,
 tier 2 within ~15. The opening squint is a hook, not a wall.
@@ -685,10 +694,10 @@ accessibility pass, balance harness tuning.
 4. **Does non-grid placement survive touch input?** Raycast ghost placement plus a
    nudge-pad is the proposal, but this must be prototyped in Phase 0 — if it feels
    bad, the whole placement pillar is at risk.
-5. **Legibility at low cell counts.** The real open risk of the 3D→ASCII approach:
-   at 40×24 (tier 0) a building may be an unreadable smear. Mitigations: strong
-   silhouettes, mandatory labels, and a camera that snaps closer at low tiers. Must
-   be answered in Phase 0, and it constrains how punishing tier 0 can be.
+5. ~~**Legibility at low cell counts.**~~ **Answered in Phase 0 (§16).** At 40
+   columns a district is readable *if and only if* directional edge glyphs are on
+   and the camera zooms in to suit the tier. Both are now in the design. Remaining
+   sub-question: whether tier 0 still needs unit labels on top of that.
 6. **Camera rotation vs. spatial memory.** Free orbit is expressive but players lose
    track of their own city. Proposal: 4 fixed 90° steps by default, free orbit
    unlocked as a tier-3 option, with a compass always visible.
@@ -697,7 +706,73 @@ accessibility pass, balance harness tuning.
 
 ---
 
-## 16. References Consulted
+## 16. Phase 0 Results
+
+Phase 0 is built (`src/`, run with `npm run dev`). It is the render pipeline, camera,
+placement, terminal chrome, sim loop, save system and PWA shell, with no gameplay —
+its job was to answer three questions before any content exists. Verified with an
+automated harness (`npm run shots`) that drives a real browser at iPhone dimensions,
+screenshots every tier, and dumps the literal character grid to text so output can be
+diffed rather than eyeballed.
+
+### Q1: does the 3D→ASCII output read clearly on a phone? — **Yes, conditionally**
+
+- At **64 columns** (tier 2) individual buildings are clearly distinguishable: the
+  wheel's disc-on-a-mast, the mega complex's stepped mass, security towers, pinball
+  ramps. The approach works.
+- At **40 columns** (tier 0) it works *only with edge glyphs enabled*. Without them
+  the district is an amber smear with no identifiable structure. This was the single
+  biggest finding and it changed the tier table (§2.4).
+- **Edges must be gated on real geometry.** A luminance-only edge pass fires on the
+  aura heatmap painted across the ground and fills the screen with meaningless
+  diagonals. The fix is a depth laplacian (zero across any flat plane however steeply
+  it recedes, spikes at silhouettes) plus a normal-discontinuity term. The gate must
+  also be strict: a loose threshold turns every facet of a low-poly cylinder into an
+  edge and buildings dissolve into line spaghetti.
+- **Portrait framing needs its own solution.** Sizing the orthographic camera by
+  half-height collapses the visible width on a 0.46-aspect phone. Zoom is defined by
+  half-*width*, and the camera pitch was raised from ~35° to ~49°, because a shallow
+  angle projects a square district into a squat rhombus that wastes a tall screen.
+
+### Q2: does continuous placement survive touch? — **Mechanically yes, ergonomically unproven**
+
+Raycast ghost placement with a live income-delta readout works, and two units placed
+0.25 world units apart — far finer than one character cell — resolve as distinct
+positions with different yields. The character grid demonstrably does not quantize
+position. What is *not* proven is how it feels under a thumb on a real device; that
+needs a human with a phone, not a headless browser.
+
+### Q3: does it hold frame rate? — **Unverified, and honestly so**
+
+The only GPU available here is SwiftShader (software rasterization), so absolute
+numbers are meaningless: 9–26 fps across tiers, which a real mobile GPU would not
+resemble. The useful signal is relative — tier 5 costs roughly 2.5× tier 0, which
+tracks cell count as designed rather than revealing a pathology. The architecture's
+central performance claim (the scene renders to ~5k pixels; the per-pixel pass is two
+texture fetches) is structurally sound but **must be measured on real hardware
+before it is believed**.
+
+### Other results
+
+- **Font coverage: no gaps.** Every glyph in the charset, box drawing and diagonals
+  included, rendered from the system monospace stack. The atlas builder probes each
+  glyph and substitutes an ASCII fallback for any blank, so a font-poor device
+  degrades instead of showing tofu.
+- **Save export/import round-trips** correctly; schema is versioned with migrations.
+- Two bugs worth recording because both are invisible in code review and obvious on
+  screen: the UI cell buffer is authored top-down while texture V runs bottom-up (the
+  HUD rendered upside down), and `CanvasTexture` defaults to `flipY: true` (every
+  glyph rendered vertically mirrored).
+
+### What Phase 0 says about the design
+
+The 3D→ASCII pipeline is validated as the right call: low-poly untextured primitives
+do produce readable output, confirming the cheap-art claim in §2.3. The open risks
+that remain are ergonomic and performance-related, and both need a physical device.
+
+---
+
+## 17. References Consulted
 
 Design patterns drawn from, and verified during research:
 
